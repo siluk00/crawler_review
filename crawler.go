@@ -3,9 +3,10 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"golang.org/x/net/html"
 )
@@ -16,9 +17,7 @@ type Book struct {
 	Rating string
 }
 
-var results []Book
-
-func fetchPage(url string) (*html.Node, error) {
+func fetchPage(client *http.Client, url string) (*html.Node, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -26,13 +25,14 @@ func fetchPage(url string) (*html.Node, error) {
 
 	req.Header.Set("Accept-Encoding", "zstd")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
+	//slog.Info("found ", "body", string(body))
 	if err != nil {
 		return nil, err
 	}
@@ -44,12 +44,12 @@ func fetchPage(url string) (*html.Node, error) {
 	return doc, nil
 }
 
-func parseBooks(doc *html.Node) {
+func parseBooks(doc *html.Node, results *[]Book) {
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode && hasClass(n, "product_pod") {
 			book := extractBook(n)
-			results = append(results, book)
+			*results = append(*results, book)
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			walk(c)
@@ -117,22 +117,31 @@ func getNextPage(doc *html.Node) string {
 
 func crawl() {
 	base := "http://books.toscrape.com/catalogue/"
-	page := "page-2.htm"
+	// 1. o original começava na pagina 2 e terminava com .htm e a pagina é .html
+	page := "page-1.html"
+
+	// 2. substitui a variavel global por uma variavel local
+	// melhor pra escalabilidade em caso de multiplas goroutines
+	var results []Book
+
+	// 3. Reutilização do cliente com timeout
+	client := &http.Client{Timeout: 10 * time.Second}
 
 	for page != "" {
-		fmt.Println("Coletando:", page)
+		// 4.substituação por slog
+		slog.Info("Coletando:", "page", page)
 
-		doc, err := fetchPage(base + page)
+		doc, err := fetchPage(client, base+page)
 		if err != nil {
-			log.Println("Erro:", err) 
+			slog.Error("erro ao buscar página", "page", page, "error", err)
 			break
 		}
 
-		parseBooks(doc)
+		parseBooks(doc, &results)
 
 		next := getNextPage(doc)
 		if next == "" {
-			parseBooks(doc)
+			parseBooks(doc, &results)
 		}
 		page = next
 	}
