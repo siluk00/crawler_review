@@ -99,10 +99,12 @@ func getNextPage(doc *html.Node) string {
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode && n.Data == "li" && hasClass(n, "next") {
-			if n.FirstChild != nil && n.FirstChild.NextSibling != nil {
-				for _, a := range n.FirstChild.NextSibling.Attr {
+			if n.FirstChild != nil {
+				for _, a := range n.FirstChild.Attr {
 					if a.Key == "href" {
 						next = a.Val
+						slog.Info("next", "next", next)
+
 					}
 				}
 			}
@@ -115,7 +117,7 @@ func getNextPage(doc *html.Node) string {
 	return next
 }
 
-func crawl() {
+func crawl() ([]Book, error) {
 	base := "http://books.toscrape.com/catalogue/"
 	// 1. o original começava na pagina 2 e terminava com .htm e a pagina é .html
 	page := "page-1.html"
@@ -133,22 +135,24 @@ func crawl() {
 
 		doc, err := fetchPage(client, base+page)
 		if err != nil {
-			slog.Error("erro ao buscar página", "page", page, "error", err)
-			break
+			slog.Error("erro ao buscar página, retornando resultados parciais",
+				"page", page,
+				"coletados", len(results),
+				"erro", err,
+			)
+			// 5.Retornando resultados parciais coletados
+			return results, fmt.Errorf("pagina %s: %w", page, err)
 		}
 
 		parseBooks(doc, &results)
+		// 6. Removi a duplicação da última página
+		page = getNextPage(doc)
 
-		next := getNextPage(doc)
-		if next == "" {
-			parseBooks(doc, &results)
-		}
-		page = next
 	}
 
-	for _, b := range results {
-		fmt.Printf("Título: %s | Preço: %s | Avaliação: %s\n", b.Title, b.Price, b.Rating)
-	}
+	slog.Info("crawl completado", "total", len(results))
+
+	return results, nil
 }
 
 func hasClass(n *html.Node, class string) bool {
@@ -161,5 +165,13 @@ func hasClass(n *html.Node, class string) bool {
 }
 
 func main() {
-	crawl()
+	results, err := crawl()
+
+	if err != nil {
+		slog.Error("erro ao finalizar o crawler", "error", err, "resultados parciais", len(results))
+	}
+
+	for _, b := range results {
+		fmt.Printf("Título: %s | Preço: %s | Avaliação: %s\n", b.Title, b.Price, b.Rating)
+	}
 }
